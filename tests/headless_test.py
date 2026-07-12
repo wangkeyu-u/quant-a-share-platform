@@ -10,6 +10,7 @@ from quant.strategies.registry import get_strategy, list_strategies
 from quant.backtest.engine import Backtest
 from quant.backtest.optimize import optimize
 from quant.ai.gateway import get_gateway
+from quant.ai import analysis
 from quant.ml.features import FEATURE_COLS, build_features
 from quant.ml.trainer import train_models, walk_forward_signals, train_pooled, walk_forward_pooled
 from quant.pipeline.runner import run_pipeline
@@ -119,6 +120,12 @@ def main():
             check("远程未配置时 analyze 应抛错(实际未抛)", False)
         except RuntimeError:
             check("远程未配置时 analyze 抛 RuntimeError", True)
+        # GUI 的「生成 AI 点评」依赖 analysis.market_commentary 在未配置时抛错以优雅降级
+        try:
+            analysis.market_commentary(df, {})
+            check("market_commentary 未配置应抛错(实际未抛)", False)
+        except RuntimeError:
+            check("market_commentary 未配置抛 RuntimeError(供 GUI 优雅降级)", True)
     else:
         check("远程已配置(跳过报错断言)", True)
 

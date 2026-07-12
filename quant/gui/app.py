@@ -4,6 +4,7 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
 from datetime import datetime, timedelta
+import threading
 
 import numpy as np
 import pandas as pd
@@ -18,8 +19,33 @@ from quant.strategies.registry import get_strategy, list_strategies
 from quant.backtest.engine import Backtest
 from quant.trading.paper import PaperTrader
 from quant.gui.chart import plot_equity, plot_kline
+from quant.ai.gateway import get_gateway
+from quant.ai import analysis
 
 PERIODS_PER_YEAR = 252
+
+
+ABOUT_CONTENT = (
+    "量化炒股平台 (沪深A股) — 使用说明\n"
+    "================================\n\n"
+    "1. 行情 / 信号\n"
+    "   - 选择或输入股票代码,设置起止日期,选择策略与参数。\n"
+    "   - 点击『加载行情并计算信号』绘制 K 线、成交量与买卖点。\n"
+    "   - 数据源:优先 akshare 真实 A 股日线;无网络/接口异常时自动回退到确定性模拟数据。\n\n"
+    "2. 回测\n"
+    "   - 设置初始资金、佣金率、滑点率、仓位比例(1.0=满仓)。\n"
+    "   - 运行回测后查看权益曲线、绩效指标(年化/最大回撤/夏普/卡玛/胜率)与成交记录。\n\n"
+    "3. 模拟交易\n"
+    "   - 『运行全程模拟』按历史信号跑完整虚拟盘;『下一交易日』逐日步进,模拟实盘决策。\n\n"
+    "4. AI 行情点评\n"
+    "   - 在『说明』页点击『生成 AI 点评』,远程大模型(经统一 AI 网关)会基于该股票\n"
+    "     近期行情与已有回测绩效生成一段客观短线点评。未配置远程网关时给出 .env 指引。\n\n"
+    "内置策略:双均线交叉、MACD 金叉死叉、布林带突破、ML 双模型(可插拔扩展)。\n\n"
+    "⚠️ 风险提示\n"
+    "   - 本软件仅用于量化学习与策略研究,所有交易均为虚拟模拟,不构成任何投资建议。\n"
+    "   - 历史回测收益不代表未来表现;实盘前请充分验证并自担风险。\n"
+    "   - akshare 数据为第三方公开数据,可能存在延迟或误差。\n"
+)
 
 
 def fmt_money(v) -> str:
@@ -380,28 +406,88 @@ class QuantApp:
 
     # ---------- 说明 ----------
     def _build_about(self):
-        txt = scrolledtext.ScrolledText(self.tab_about, wrap=tk.WORD)
-        txt.pack(fill=tk.BOTH, expand=1, padx=8, pady=8)
-        content = (
-            "量化炒股平台 (沪深A股) — 使用说明\n"
-            "================================\n\n"
-            "1. 行情 / 信号\n"
-            "   - 选择或输入股票代码,设置起止日期,选择策略与参数。\n"
-            "   - 点击『加载行情并计算信号』绘制 K 线、成交量与买卖点。\n"
-            "   - 数据源:优先 akshare 真实 A 股日线;无网络/接口异常时自动回退到确定性模拟数据。\n\n"
-            "2. 回测\n"
-            "   - 设置初始资金、佣金率、滑点率、仓位比例(1.0=满仓)。\n"
-            "   - 运行回测后查看权益曲线、绩效指标(年化/最大回撤/夏普/卡玛/胜率)与成交记录。\n\n"
-            "3. 模拟交易\n"
-            "   - 『运行全程模拟』按历史信号跑完整虚拟盘;『下一交易日』逐日步进,模拟实盘决策。\n\n"
-            "内置策略:双均线交叉、MACD 金叉死叉、布林带突破(可插拔扩展)。\n\n"
-            "⚠️ 风险提示\n"
-            "   - 本软件仅用于量化学习与策略研究,所有交易均为虚拟模拟,不构成任何投资建议。\n"
-            "   - 历史回测收益不代表未来表现;实盘前请充分验证并自担风险。\n"
-            "   - akshare 数据为第三方公开数据,可能存在延迟或误差。\n"
-        )
-        txt.insert(tk.END, content)
+        # ===== 上半部分:AI 行情点评(远程大模型,经统一网关) =====
+        ai_frame = ttk.LabelFrame(self.tab_about, text="AI 行情点评 (远程大模型)")
+        ai_frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(8, 4))
+
+        top = ttk.Frame(ai_frame)
+        top.pack(side=tk.TOP, fill=tk.X, padx=6, pady=4)
+        ttk.Label(top, text="标的:").pack(side=tk.LEFT)
+        lab = ttk.Label(top, textvariable=self.stock_var, width=24,
+                        relief=tk.SUNKEN, anchor=tk.W)
+        lab.pack(side=tk.LEFT, padx=4)
+        ttk.Button(top, text="生成 AI 点评", command=self._on_ai_commentary).pack(side=tk.LEFT, padx=6)
+        self.ai_status_var = tk.StringVar(value=self._gateway_status_text())
+        ttk.Label(top, textvariable=self.ai_status_var, foreground="gray").pack(side=tk.LEFT, padx=6)
+
+        self.ai_text = scrolledtext.ScrolledText(ai_frame, wrap=tk.WORD, height=8)
+        self.ai_text.pack(fill=tk.BOTH, expand=0, padx=6, pady=(0, 6))
+        self.ai_text.insert(tk.END,
+            "点击『生成 AI 点评』,由远程大模型基于该股票近期行情(及已有回测绩效)生成客观短线点评。\n"
+            "需先在本机配置 .env(见 .env.example):AI_GATEWAY_BASE_URL / AI_GATEWAY_API_KEY / AI_GATEWAY_MODEL。")
+        self.ai_text.config(state=tk.DISABLED)
+
+        # ===== 下半部分:使用说明(静态,不可编辑) =====
+        help_frame = ttk.LabelFrame(self.tab_about, text="使用说明")
+        help_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=1, padx=8, pady=(4, 8))
+        txt = scrolledtext.ScrolledText(help_frame, wrap=tk.WORD)
+        txt.pack(fill=tk.BOTH, expand=1, padx=6, pady=6)
+        txt.insert(tk.END, ABOUT_CONTENT)
         txt.config(state=tk.DISABLED)
+
+    def _gateway_status_text(self) -> str:
+        try:
+            gw = get_gateway()
+            return "远程AI: 已配置 ✓" if gw.remote is not None else "远程AI: 未配置(见 .env.example)"
+        except Exception:
+            return "远程AI: 状态未知"
+
+    def _on_ai_commentary(self):
+        # 确保已加载所选标的行情(无则先拉取)
+        try:
+            self._ensure_data()
+        except Exception as e:
+            messagebox.showerror("错误", f"加载行情失败: {e}")
+            return
+        if self.df is None or len(self.df) == 0:
+            messagebox.showwarning("提示", "行情为空,无法生成点评")
+            return
+
+        # 优先用已有回测绩效;否则传空 dict(点评主要基于近期价量)
+        metrics = {}
+        if self.bt_result is not None:
+            metrics = self.bt_result.get("metrics", {}) or {}
+
+        self.ai_status_var.set("远程AI: 生成中...")
+        self.ai_text.config(state=tk.NORMAL)
+        self.ai_text.delete("1.0", tk.END)
+        self.ai_text.insert(tk.END, "正在请求远程大模型,请稍候...")
+        self.ai_text.config(state=tk.DISABLED)
+        self.root.update_idletasks()
+
+        def worker():
+            try:
+                comment = analysis.market_commentary(self.df, metrics)
+                ok, text = True, comment
+            except RuntimeError as e:
+                ok, text = False, (
+                    f"无法生成 AI 点评:{e}\n\n"
+                    "请在项目根目录创建 .env 并填入(参考 .env.example):\n"
+                    "AI_GATEWAY_BASE_URL=https://你的兼容接口/v1\n"
+                    "AI_GATEWAY_API_KEY=sk-xxxx\n"
+                    "AI_GATEWAY_MODEL=gpt-4o-mini\n")
+            except Exception as e:
+                ok, text = False, f"AI 点评生成出错:{e}"
+            self.root.after(0, self._set_ai_commentary, text, ok)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _set_ai_commentary(self, text: str, ok: bool):
+        self.ai_text.config(state=tk.NORMAL)
+        self.ai_text.delete("1.0", tk.END)
+        self.ai_text.insert(tk.END, text)
+        self.ai_text.config(state=tk.DISABLED)
+        self.ai_status_var.set(self._gateway_status_text())
 
     # ---------- 工具 ----------
     def _show_fig(self, parent, fig):
