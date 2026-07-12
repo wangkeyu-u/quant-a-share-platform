@@ -15,6 +15,8 @@ import os
 
 import pandas as pd
 
+from quant.ai.gateway import get_gateway
+from quant.ai import analysis
 from quant.backtest.engine import Backtest
 from quant.backtest.metrics import compute_metrics
 from quant.backtest.optimize import optimize
@@ -46,6 +48,11 @@ def run_pipeline(symbols: list, start: str = "20100101",
                  pooled: bool = False) -> tuple:
     if end is None:
         end = pd.Timestamp.today().strftime("%Y%m%d")
+
+    # 统一 AI 网关:清零本次运行的调用日志,并记下远程是否可用
+    gw = get_gateway()
+    gw.log.clear()
+    remote_configured = gw.remote is not None
 
     # 先一次性把所有标的行情拉到内存,供 pooled 模式复用
     raw = {sym: load_data(sym, start, end) for sym in symbols}
@@ -108,6 +115,20 @@ def run_pipeline(symbols: list, start: str = "20100101",
             "bench_return": bench["总收益率"],
             "beats_benchmark": res_ml["metrics"]["夏普比率"] > bench["夏普比率"],
         })
+
+    # 远程 AI 分析(可选):远程网关未配置或请求失败都优雅跳过,不影响主流程
+    report["ai_commentary"] = None
+    if remote_configured:
+        try:
+            print("[pipeline] 调用 AI 网关生成报告点评 ...")
+            report["ai_commentary"] = analysis.summarize_report(report)
+        except Exception as e:  # 网络/鉴权/超时等,均降级跳过
+            report["ai_commentary"] = f"(远程 AI 网关调用失败,已跳过: {type(e).__name__})"
+
+    report["ai_gateway"] = {
+        **gw.log_summary(),
+        "remote_configured": remote_configured,
+    }
 
     os.makedirs(REPORTS_DIR, exist_ok=True)
     path = os.path.join(REPORTS_DIR, "report.json")

@@ -67,6 +67,27 @@ python run_pipeline.py --sample --start 20200101 --top-n 3
 
 ---
 
+## 统一 AI 网关
+
+平台里**所有「调用 AI」的地方都收口到同一个网关**（`quant/ai/`），本地推理与远程大模型共用一个入口，按任务类型自动路由，且每次调用都记入日志可审计。
+
+- **本地后端（`LocalBackend`）**：封装 scikit-learn 双模型（GBM 分类 + 回归）的构造 / 训练 / 预测。ML 训练（`train_models` / `train_pooled`）与 walk-forward 预测（`walk_forward_signals` / `walk_forward_pooled`）全部经此，不直连 sklearn。
+- **远程后端（`RemoteLLMBackend`）**：OpenAI 兼容协议的 `/v1/chat/completions` 调用，用于「用 AI 分析数据」——新闻情绪、报告摘要、行情点评（见 `quant/ai/analysis.py`）。
+- **路由规则**：`train / inference / signal / predict` → 本地；`sentiment / summary / commentary / chat` → 远程。`gateway.call(task, **kwargs)` 是统一入口，`get_gateway()` 返回单例。
+
+### 配置（远程 LLM 可选）
+
+复制 `.env.example` 为 `.env` 并填写（也可直接 export 环境变量）。**只有 `AI_GATEWAY_BASE_URL` 与 `AI_GATEWAY_API_KEY` 同时设置，远程后端才启用**；未设置时远程调用会优雅跳过，主流程不受影响。
+
+```bash
+cp .env.example .env
+# 编辑 .env:填入你的 AI_GATEWAY_BASE_URL / AI_GATEWAY_API_KEY / AI_GATEWAY_MODEL
+```
+
+兼容任意 OpenAI 协议服务（OpenAI、DeepSeek、通义、本地 Ollama 等）。配置后，跑 `run_pipeline.py` 会在报告里附加 `ai_commentary`（用远程大模型对本次回测做中文总结），并在报告 `ai_gateway` 字段给出本次调用的后端分布与计数。
+
+---
+
 ## 无界面测试
 
 ```bash
@@ -146,6 +167,7 @@ quant_platform/
 ├── models/                 # 训练好的 ML 模型（自动生成）
 ├── reports/                # 报告 report.json（自动生成）
 └── quant/
+    ├── ai/                 # 统一 AI 网关（本地 GBM 推理 + 远程 LLM）
     ├── data/               # 行情加载（akshare + 离线兜底）+ 本地缓存 store
     ├── indicators/         # MA / MACD / RSI / KDJ / BOLL
     ├── strategies/         # 策略（base + 具体策略 + 注册表）

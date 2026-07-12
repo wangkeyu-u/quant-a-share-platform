@@ -12,6 +12,9 @@
    否则空仓——只做高确定性交易,这是实盘里最现实的"提高胜率"手段。
 4. pooled 模式:把全市场多只股票的特征按「时间截断」拼接训练(特征都是比率,
    量纲一致可拼),每次预测第 t 日时只用 date < t 的全部股票历史,无前视。
+
+所有模型「构造/训练/预测」都经统一 AI 网关(quant.ai.gateway)的本地后端,
+保证平台的 AI 调用只有一个入口。
 """
 from __future__ import annotations
 
@@ -20,10 +23,10 @@ import os
 import joblib
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import GradientBoostingClassifier, GradientBoostingRegressor
 from sklearn.metrics import accuracy_score, mean_absolute_error, r2_score, roc_auc_score
 from sklearn.model_selection import TimeSeriesSplit, cross_val_score
 
+from quant.ai.gateway import get_gateway
 from quant.ml.features import CLS_TARGET, FEATURE_COLS, REG_TARGET, build_features
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -44,25 +47,15 @@ def _clean(feats: pd.DataFrame, dropna: bool = True) -> pd.DataFrame:
     return feats
 
 
-def _new_clf(p):
-    return GradientBoostingClassifier(
-        n_estimators=p["n_estimators"], max_depth=p["max_depth"],
-        learning_rate=p["learning_rate"], subsample=0.8, random_state=42)
-
-
-def _new_reg(p):
-    return GradientBoostingRegressor(
-        n_estimators=p["n_estimators"], max_depth=p["max_depth"],
-        learning_rate=p["learning_rate"], subsample=0.8, random_state=42)
-
-
 def _best_params(X, y, make_fn, scoring):
-    """时序交叉验证选最优超参。"""
+    """时序交叉验证选最优超参(所有 estimator 构造都经网关)。"""
+    gw = get_gateway()
     tscv = TimeSeriesSplit(n_splits=3)
     best, best_s = None, -np.inf
     for p in PARAM_GRID:
         try:
-            s = cross_val_score(make_fn(p), X, y, cv=tscv, scoring=scoring, n_jobs=1)
+            est = make_fn(p)
+            s = cross_val_score(est, X, y, cv=tscv, scoring=scoring, n_jobs=1)
             m = s.mean()
         except Exception:
             continue
@@ -76,8 +69,9 @@ def train_models(df: pd.DataFrame, symbol: str, horizon: int = 5,
     """在全部历史上按时间切分训练/测试,训练双模型并保存,返回评估指标。
 
     切分方式:前 (1-test_size) 用于训练 + 超参搜索,后 test_size 作为样本外测试集,
-    报告里的指标就是这段"没见过的数据"上的表现。
+    报告里的指标就是这段"没见过的数据"上的表现。训练与预测均经 AI 网关。
     """
+    gw = get_gateway()
     feats = _clean(build_features(df))
     X = feats[FEATURE_COLS]
     yc, yr = feats[CLS_TARGET], feats[REG_TARGET]
@@ -88,19 +82,21 @@ def train_models(df: pd.DataFrame, symbol: str, horizon: int = 5,
     yc_tr, yc_te = yc.iloc[:split], yc.iloc[split:]
     yr_tr, yr_te = yr.iloc[:split], yr.iloc[split:]
 
-    # 分类器:时序 CV 选超参
-    clf_p, clf_cv = _best_params(Xtr, yc_tr, _new_clf, "roc_auc")
-    clf = _new_clf(clf_p).fit(Xtr, yc_tr)
+    # 分类器:时序 CV 选超参(estimator 构造经网关)
+    clf_p, clf_cv = _best_params(
+        Xtr, yc_tr, lambda p: gw.make_estimator(p, "clf"), "roc_auc")
     # 回归器:时序 CV 选超参
-    reg_p, reg_cv = _best_params(Xtr, yr_tr, _new_reg, "r2")
-    reg = _new_reg(reg_p).fit(Xtr, yr_tr)
+    reg_p, reg_cv = _best_params(
+        Xtr, yr_tr, lambda p: gw.make_estimator(p, "reg"), "r2")
+    # 训练双模型(经网关)
+    clf, reg = gw.fit_pair(Xtr, yc_tr, yr_tr, clf_p, reg_p)
 
-    # 样本外评估
-    pred_c = clf.predict(Xte)
+    # 样本外评估(预测经网关)
+    proba, pred_r = gw.predict_pair((clf, reg), Xte)
+    pred_c = (proba > 0.5).astype(int)
     acc = accuracy_score(yc_te, pred_c)
-    auc = (roc_auc_score(yc_te, clf.predict_proba(Xte)[:, 1])
+    auc = (roc_auc_score(yc_te, proba)
            if yc_te.nunique() > 1 else float("nan"))
-    pred_r = reg.predict(Xte)
     r2 = r2_score(yr_te, pred_r)
     mae = mean_absolute_error(yr_te, pred_r)
 
@@ -126,14 +122,13 @@ def train_models(df: pd.DataFrame, symbol: str, horizon: int = 5,
 
 
 def _train_pair_on(feats_slice: pd.DataFrame):
-    """在给定切片上训练一对模型,返回 (clf, reg) 或 None。"""
+    """在给定切片上训练一对模型(经网关),返回 (clf, reg) 或 None。"""
+    gw = get_gateway()
     sub = feats_slice.dropna(subset=FEATURE_COLS + [CLS_TARGET, REG_TARGET])
     if len(sub) < 50 or sub[CLS_TARGET].nunique() < 2:
         return None
     X, yc, yr = sub[FEATURE_COLS], sub[CLS_TARGET], sub[REG_TARGET]
-    clf = _new_clf(PARAM_GRID[0]).fit(X, yc)
-    reg = _new_reg(PARAM_GRID[0]).fit(X, yr)
-    return clf, reg
+    return gw.fit_pair(X, yc, yr, PARAM_GRID[0], PARAM_GRID[0])
 
 
 def walk_forward_signals(df: pd.DataFrame, horizon: int = 5, lookback: int = 60,
@@ -144,7 +139,9 @@ def walk_forward_signals(df: pd.DataFrame, horizon: int = 5, lookback: int = 60,
 
     门控:上涨概率 > prob_threshold 且 预测前向收益 > return_threshold 才持仓。
     严格防前视:第 t 日信号由 [0, t) 历史得到,只用第 t 日特征预测。
+    训练/预测均经 AI 网关本地后端。
     """
+    gw = get_gateway()
     feats = build_features(df)
     n = len(df)
     position = pd.Series(0, index=df.index)
@@ -165,8 +162,7 @@ def walk_forward_signals(df: pd.DataFrame, horizon: int = 5, lookback: int = 60,
         Xt = feats.iloc[[t]][FEATURE_COLS]
         if Xt.isna().any().any():
             continue
-        prob_up = clf.predict_proba(Xt)[0, 1]
-        pred_ret = float(reg.predict(Xt)[0])
+        prob_up, pred_ret = gw.score_pair((clf, reg), Xt)
         if prob_up > prob_threshold and pred_ret > return_threshold:
             position.iloc[t] = 1
     return position
@@ -190,6 +186,7 @@ def train_pooled(dfs: list, model_path: str | None = None,
 
     切分:按时间把最后 test_size 比例作为样本外测试(用 date 排序),避免用未来数据。
     """
+    gw = get_gateway()
     pool = _pool_frame(dfs)
     pool = pool.dropna(subset=FEATURE_COLS + [CLS_TARGET, REG_TARGET])
     pool = pool.sort_values("date").reset_index(drop=True)
@@ -197,16 +194,20 @@ def train_pooled(dfs: list, model_path: str | None = None,
     split = int(n * (1 - test_size))
     tr, te = pool.iloc[:split], pool.iloc[split:]
 
-    clf_p, _ = _best_params(tr[FEATURE_COLS], tr[CLS_TARGET], _new_clf, "roc_auc")
-    reg_p, _ = _best_params(tr[FEATURE_COLS], tr[REG_TARGET], _new_reg, "r2")
-    clf = _new_clf(clf_p).fit(tr[FEATURE_COLS], tr[CLS_TARGET])
-    reg = _new_reg(reg_p).fit(tr[FEATURE_COLS], tr[REG_TARGET])
+    clf_p, _ = _best_params(
+        tr[FEATURE_COLS], tr[CLS_TARGET],
+        lambda p: gw.make_estimator(p, "clf"), "roc_auc")
+    reg_p, _ = _best_params(
+        tr[FEATURE_COLS], tr[REG_TARGET],
+        lambda p: gw.make_estimator(p, "reg"), "r2")
+    clf, reg = gw.fit_pair(
+        tr[FEATURE_COLS], tr[CLS_TARGET], tr[REG_TARGET], clf_p, reg_p)
 
-    pred_c = clf.predict(te[FEATURE_COLS])
+    proba, pred_r = gw.predict_pair((clf, reg), te[FEATURE_COLS])
+    pred_c = (proba > 0.5).astype(int)
     acc = accuracy_score(te[CLS_TARGET], pred_c)
-    auc = (roc_auc_score(te[CLS_TARGET], clf.predict_proba(te[FEATURE_COLS])[:, 1])
+    auc = (roc_auc_score(te[CLS_TARGET], proba)
            if te[CLS_TARGET].nunique() > 1 else float("nan"))
-    pred_r = reg.predict(te[FEATURE_COLS])
     r2 = r2_score(te[REG_TARGET], pred_r)
 
     os.makedirs(MODELS_DIR, exist_ok=True)
@@ -234,7 +235,9 @@ def walk_forward_pooled(df: pd.DataFrame, dfs: list, model_path: str,
 
     "用全部数据"且防前视:预测某只股票第 t 日时,训练集包含所有股票在 t 日之前
     的数据(不含任何未来信息);滚动上限让它既能吃海量历史、又不会越跑越慢。
+    训练/预测均经 AI 网关本地后端。
     """
+    gw = get_gateway()
     # 特征只算一次(此前放在循环里,是主要的性能瓶颈)
     pool_all = _pool_frame(dfs).sort_values("date").reset_index(drop=True)
     feats_df = build_features(df)
@@ -258,8 +261,7 @@ def walk_forward_pooled(df: pd.DataFrame, dfs: list, model_path: str,
         Xt = feats_df.iloc[[t]][FEATURE_COLS]
         if Xt.isna().any().any():
             continue
-        prob_up = clf.predict_proba(Xt)[0, 1]
-        pred_ret = float(reg.predict(Xt)[0])
+        prob_up, pred_ret = gw.score_pair((clf, reg), Xt)
         if prob_up > prob_threshold and pred_ret > return_threshold:
             position.iloc[t] = 1
     return position

@@ -9,6 +9,7 @@ from quant.indicators.tech import ma, macd, rsi, boll, kdj
 from quant.strategies.registry import get_strategy, list_strategies
 from quant.backtest.engine import Backtest
 from quant.backtest.optimize import optimize
+from quant.ai.gateway import get_gateway
 from quant.ml.features import FEATURE_COLS, build_features
 from quant.ml.trainer import train_models, walk_forward_signals, train_pooled, walk_forward_pooled
 from quant.pipeline.runner import run_pipeline
@@ -94,9 +95,32 @@ def main():
     check("ML 模型文件已保存", __import__("os").path.exists(mlm["model_path"]))
 
     # walk-forward 信号(无前视 + 置信度门控)
+    gw = get_gateway()
+    n_before_wf = len(gw.log)
     wf = walk_forward_signals(df)
     check("wf 信号长度一致", len(wf) == len(df))
     check("wf 信号取值∈{0,1}", set(np.unique(wf.dropna())).issubset({0, 1}))
+    # 关键:walk-forward 的训练/预测都经统一 AI 网关(本地后端),日志应增长
+    check("walk-forward 全部经 AI 网关(本地调用有记录)", len(gw.log) > n_before_wf)
+    check("AI 网关日志含 local 后端", gw.log_summary()["local"] > 0)
+
+    # 统一入口 call() 可按 task 路由到本地后端
+    feats = build_features(df).dropna(subset=FEATURE_COLS + ["target"])
+    clf, reg = gw.fit_pair(feats[FEATURE_COLS], feats["target"], feats["target"],
+                           {"n_estimators": 50, "max_depth": 2, "learning_rate": 0.1})
+    sig = gw.call("signal", model_pair=(clf, reg), X=feats[FEATURE_COLS].iloc[[0]],
+                  prob_threshold=0.5, return_threshold=0.0)
+    check("网关 call(signal) 走本地后端", sig in (0, 1))
+
+    # 远程 LLM 未配置时应抛 RuntimeError(证明所有远程调用也必须经同一网关)
+    if gw.remote is None:
+        try:
+            gw.analyze("测试")
+            check("远程未配置时 analyze 应抛错(实际未抛)", False)
+        except RuntimeError:
+            check("远程未配置时 analyze 抛 RuntimeError", True)
+    else:
+        check("远程已配置(跳过报错断言)", True)
 
     # 跨股票联合(pooled)训练 + walk-forward(用全市场数据,无前视)
     df2 = generate_mock("000001", "2023-01-01", "2024-12-31")
