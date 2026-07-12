@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# 虚拟环境
+venv/
+.venv/
+env/
+
+# 运行时生成物(增量缓存 / 训练模型 / 报告,均可由 run_pipeline.py 重建)
+data_cache/
+models/
+reports/
+*.log
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
