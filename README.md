@@ -1,3 +1,31 @@
+# 量化炒股平台（沪深A股）/ Quantitative Trading Platform (A-Share)
+
+> 面向沪深 A 股的本地量化交易平台 —— 行情获取、技术指标、策略回测、模拟交易、双模型 ML 训练、walk-forward 防前视、参数寻优、桌面 GUI、一键全流程 + 每日定时任务。纯 Python，无需任何 token。
+>
+> A local quantitative trading platform for China A-shares — market data, technical indicators, strategy backtesting, simulated trading, dual-model ML training, walk-forward anti-lookahead, parameter optimization, desktop GUI, one-click pipeline + daily scheduled tasks. Pure Python, no token required.
+
+[![Python](https://img.shields.io/badge/Python-3.10%2B-blue)](https://www.python.org/)
+[![GUI](https://img.shields.io/badge/GUI-tkinter%20%2B%20matplotlib-3776AB)]()
+[![ML](https://img.shields.io/badge/ML-scikit--learn-F7931E)](https://scikit-learn.org/)
+[![Data](https://img.shields.io/badge/Data-akshare-success)](https://akshare.akfamily.xyz/)
+[![No Token](https://img.shields.io/badge/No%20Token-Required-brightgreen)]()
+
+---
+
+## Overview (English)
+
+A local-first quantitative trading platform for China A-shares (Shanghai/Shenzhen). It integrates market data fetching, technical indicators, event-driven backtesting, simulated trading, and a dual-model ML pipeline (GBM classification + regression) with walk-forward anti-lookahead training — all in pure Python with a tkinter desktop GUI.
+
+**Key capabilities:**
+- **Market data**: Real-time A-share data via [akshare](https://akshare.akfamily.xyz/), with automatic fallback to deterministic mock data when offline
+- **Backtesting**: Event-driven, daily-frequency, long-only; supports commission, slippage, position sizing; outputs equity curve, performance metrics, and trade records
+- **ML pipeline**: One-click full pipeline — data update → feature engineering → ML training → ML backtesting → rule optimization → report. Walk-forward training strictly uses `[0, t-1]` history to predict day `t`, **never using future data**
+- **Unified AI gateway**: All AI calls (local GBM inference + remote LLM) route through a single gateway with automatic task-based routing and full audit logging
+- **Built-in strategies**: MA crossover, MACD, Bollinger breakout, ML direction (gradient boosting)
+- **Red = up, Green = down** (Chinese stock market convention)
+
+---
+
 # 量化炒股平台（沪深A股）
 
 一个面向沪深 A 股的**本地量化交易平台**：行情获取、技术指标、策略回测、模拟交易一体化，纯 Python 桌面应用（tkinter + matplotlib），**无需任何 token**。
