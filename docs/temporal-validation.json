@@ -1,0 +1,34 @@
+{
+  "executed_at": "2026-09-16T15:44:50.362465+00:00",
+  "environment": {
+    "python": "3.12.13",
+    "platform": "macOS-26.6.2-arm64-arm-64bit",
+    "packages": {
+      "numpy": "2.5.3",
+      "pandas": "3.0.5",
+      "scikit-learn": "1.9.1",
+      "scipy": "1.18.1",
+      "joblib": "1.6.0"
+    }
+  },
+  "tests": 9,
+  "failures": 0,
+  "errors": 0,
+  "cases": [
+    "test_temporal_validation.TemporalTests.test_all_failed_cv_scores_are_null_not_infinity",
+    "test_temporal_validation.TemporalTests.test_future_perturbation_preserves_past_model_scores",
+    "test_temporal_validation.TemporalTests.test_future_prices_cannot_change_observed_features",
+    "test_temporal_validation.TemporalTests.test_holdout_and_cv_purge_by_symbol_label_end_and_group_dates",
+    "test_temporal_validation.TemporalTests.test_horizon_changes_target_and_terminal_labels_stay_missing",
+    "test_temporal_validation.TemporalTests.test_invalid_horizons_and_dates_fail_explicitly",
+    "test_temporal_validation.TemporalTests.test_pooled_training_uses_each_symbols_observed_sessions",
+    "test_temporal_validation.TemporalTests.test_real_estimators_single_and_pooled_training",
+    "test_temporal_validation.TemporalTests.test_train_inputs_equal_rebuilding_only_available_history"
+  ],
+  "data": "seeded synthetic OHLCV; no external calls",
+  "source_sha256": {
+    "quant/ml/features.py": "cf4a990fd847cb0c933f1a83a37dce6c1ff889160670aa960f0e083c883b3303",
+    "quant/ml/trainer.py": "cb2f8331d440225ab769370b71daacd7e5b9567dd827cc0f292dcce498405410",
+    "tests/test_temporal_validation.py": "23774d771a12f361859d9bf48b184735133416f30d5c690b5e4d9850a12d819d"
+  }
+}
