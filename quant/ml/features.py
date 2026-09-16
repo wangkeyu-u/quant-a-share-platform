@@ -1,12 +1,8 @@
-"""特征工程:由 OHLCV 构造大量量价/波动率/成交量/技术指标特征,并生成多周期标签。
+"""OHLCV 特征与带可用日期的监督标签。
 
-设计要点(为"用大量数据把模型训强"服务):
-- 特征全部是「比率 / 归一化」形态(与价格量纲无关),因此多个股票的特征可以直接
-  拼接做联合(pooled)训练,不会因为股价绝对值不同而产生偏差。
-- 标签同时给出:次日方向(分类)、5日/20日前向收益(回归)。前者用于概率门控,
-  后者用于判断"该不该出手"以及预期盈亏空间。
-- target 用 shift(-h) 生成,是监督标签;walk-forward 预测时只使用当日特征,不会
-  引入未来信息。
+分类目标是次日方向,回归目标是 horizon 个观察交易日后的收益。
+fwd5/fwd20 保留为诊断列。MACD 等特征仍含价格量纲,跨股票训练并未证明
+尺度不变性。训练必须按 label_end 过滤已知结果。
 """
 from __future__ import annotations
 
@@ -15,9 +11,11 @@ import pandas as pd
 
 from quant.indicators.tech import boll, kdj, macd, ma, rsi
 
-# 分类标签列(次日方向)与默认回归标签列(5 日前向收益)
+# 分类保持次日方向;回归周期由 horizon 决定。
 CLS_TARGET = "target"
-REG_TARGET = "fwd5"
+REG_TARGET = "target_return"
+FEATURE_DATE = "feature_date"
+LABEL_END = "label_end"
 
 FEATURE_COLS = [
     # —— 收益率(多周期)——
@@ -52,8 +50,13 @@ def _tr(high, low, close):
     ], axis=1).max(axis=1)
 
 
-def build_features(df: pd.DataFrame) -> pd.DataFrame:
+def build_features(df: pd.DataFrame, horizon: int = 5) -> pd.DataFrame:
     """返回特征表(含分类/回归标签)。索引与 df 对齐。"""
+    if isinstance(horizon, bool) or not isinstance(horizon, (int, np.integer)) or horizon < 1:
+        raise ValueError("horizon must be a positive integer number of observed sessions")
+    dates = pd.to_datetime(df["date"], errors="raise")
+    if dates.isna().any() or dates.duplicated().any() or not dates.is_monotonic_increasing:
+        raise ValueError("date must be non-null, unique and increasing within each symbol")
     close = df["close"]
     high = df["high"]
     low = df["low"]
@@ -116,9 +119,13 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     out["dist_60h"] = close / close.rolling(60).max() - 1
 
     # —— 标签 ——
-    out[CLS_TARGET] = (close.shift(-1) > close).astype(int)        # 次日涨跌(分类)
+    next_close = close.shift(-1)
+    out[CLS_TARGET] = (next_close > close).astype(float).where(next_close.notna())
     out["fwd5"] = close.shift(-5) / close - 1                      # 5 日前向收益(回归)
     out["fwd20"] = close.shift(-20) / close - 1                    # 20 日前向收益(回归)
+    out[REG_TARGET] = close.shift(-horizon) / close - 1
+    out[FEATURE_DATE] = dates
+    out[LABEL_END] = dates.shift(-horizon)
 
     out = out.replace([np.inf, -np.inf], np.nan)
     return out
