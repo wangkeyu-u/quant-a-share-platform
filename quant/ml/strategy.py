@@ -1,4 +1,4 @@
-"""ML 策略:分类器+回归器双模型,walk-forward 无前视,置信度门控只做高确定性交易。"""
+"""ML 策略:用已到期标签滚动训练分类器和回归器,按预测阈值生成信号。"""
 from __future__ import annotations
 
 import pandas as pd
@@ -9,7 +9,7 @@ from quant.strategies.base import Strategy
 
 class MLStrategy(Strategy):
     name = "ml_direction"
-    description = "机器学习:GBM 双模型(涨跌概率+前向收益),walk-forward 无前视,置信度门控"
+    description = "机器学习:GBM 双模型(次日方向+前向收益),按标签可用日期滚动训练"
     params = {
         "horizon": (5, 5, 20, 5),
         "lookback": (60, 30, 250, 10),
