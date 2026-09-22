@@ -68,7 +68,7 @@ def main():
     # 模拟交易(同样信号)
     pt = PaperTrader(initial_cash=1_000_000, commission=0.0003, slippage=0.0005, stake=1.0)
     for i in range(len(df)):
-        pt.step(df["date"].iloc[i], df["close"].iloc[i], float(sig.iloc[i]))
+        pt.step_bar(df["date"].iloc[i], df["open"].iloc[i], df["close"].iloc[i], float(sig.iloc[i]))
     summ = pt.summary()
     check("模拟交易权益长度一致", len(summ["equity"]) == len(df))
     check("模拟交易末值≈回测末值", abs(summ["equity"].iloc[-1] - eq.iloc[-1]) < 1e-6)

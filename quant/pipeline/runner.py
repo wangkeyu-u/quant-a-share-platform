@@ -36,13 +36,6 @@ def _round(obj):
     return obj
 
 
-def _bench_metrics(df: pd.DataFrame, initial_cash: float) -> dict:
-    """买入持有基准绩效(用收盘价买入并持有)。"""
-    close = df["close"].values
-    equity = initial_cash * (close / close[0])
-    return compute_metrics(pd.Series(equity, index=df.index))
-
-
 def run_pipeline(symbols: list, start: str = "20100101",
                  end: str | None = None, top_n: int = 3,
                  pooled: bool = False) -> tuple:
@@ -88,9 +81,10 @@ def run_pipeline(symbols: list, start: str = "20100101",
         else:
             sig_ml = walk_forward_signals(df)
         res_ml = Backtest(df).run(sig_ml)
-        bench = _bench_metrics(df, 1_000_000)
+        bench = compute_metrics(res_ml["benchmark"])
 
         sym_rep["ml"] = {
+            "execution_protocol": res_ml["execution_protocol"],
             "train": _round(ml_metrics),
             "backtest": _round({k: v for k, v in res_ml["metrics"].items()}),
             "benchmark": _round(bench),

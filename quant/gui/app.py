@@ -369,8 +369,9 @@ class QuantApp:
             self._ensure_signals()
             self._paper_reset_state()
             for i in range(len(self.df)):
-                self.paper.step(self.df["date"].iloc[i], self.df["close"].iloc[i],
-                                float(self.signals.iloc[i]))
+                self.paper.step_bar(self.df["date"].iloc[i], self.df["open"].iloc[i],
+                                    self.df["close"].iloc[i],
+                                    float(self.signals.iloc[i]))
             self.sim_index = len(self.df)
             self._refresh_paper_view()
         except Exception as e:
@@ -385,7 +386,7 @@ class QuantApp:
                 self.paper_status.set("已到行情末尾")
                 return
             row = self.df.iloc[self.sim_index]
-            self.paper.step(row["date"], row["close"], float(self.signals.iloc[self.sim_index]))
+            self.paper.step_bar(row["date"], row["open"], row["close"], float(self.signals.iloc[self.sim_index]))
             self.sim_index += 1
             self._refresh_paper_view()
         except Exception as e:
@@ -397,7 +398,7 @@ class QuantApp:
         last = eq.iloc[-1]
         pos = self.paper.position
         self.paper_status.set(
-            f"日期 {str(self.df['date'].iloc[min(self.sim_index, len(self.df)-1)])[:10]} | "
+            f"日期 {str(self.df['date'].iloc[max(0, min(self.sim_index - 1, len(self.df)-1))])[:10]} | "
             f"持仓比例 {pos:.0%} | 现金 {fmt_money(self.paper.cash)} | "
             f"市值 {fmt_money(last)} | 成交 {len(summ['trades'])} 笔")
         self._fill_log(self.paper_tree, summ["trades"])
