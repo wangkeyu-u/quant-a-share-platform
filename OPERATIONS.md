@@ -2,7 +2,7 @@
 
 ## 数据自动化与训练流水线（全自动）
 
-最核心的能力：**一键 / 定时跑通「数据更新 → 特征工程 → ML 训练 → ML 回测 → 规则寻优 → 报告」全流程**，无需人工干预。
+核心流程：**一键跑通「数据更新 → 特征工程 → ML 训练 → ML 回测 → 规则寻优 → 报告」全流程**，无需人工干预。
 
 ### 一键脚本
 
@@ -10,7 +10,7 @@
 # 对指定标的跑全流程
 python run_pipeline.py --symbols 600519 000001 --start 20200101 --top-n 3
 
-# 或用内置样例股票（离线可用）
+# 或用内置股票代码列表（仍需 AkShare 行情）
 python run_pipeline.py --sample --start 20200101 --top-n 3
 ```
 
@@ -19,13 +19,14 @@ python run_pipeline.py --sample --start 20200101 --top-n 3
 | 参数 | 说明 |
 |------|------|
 | `--symbols` | 股票代码列表（6 位），如 `600519 000001` |
-| `--sample` | 使用内置 10 只样例股票（离线兜底） |
+| `--sample` | 使用内置 10 只股票代码；行情仍按数据模式获取 |
 | `--start` | 起始日期 `YYYYMMDD`，默认 `20200101` |
 | `--end` | 结束日期，默认今天 |
 | `--top-n` | 每个规则策略保留的寻优组合数，默认 3 |
+| `--synthetic` | 显式使用合成演示数据，不写入真实行情缓存 |
 
 流程产物：
-- `data_cache/<code>.csv`：增量更新的本地行情缓存（再次运行只补抓新交易日，速度更快）
+- `data_cache/<code>.csv` + `<code>.json`：带来源、复权方式、请求范围和内容哈希的真实行情缓存；范围扩大时重抓完整区间。旧版无来源 CSV 不会直接复用
 - `models/<code>.joblib`：训练好的 ML 模型（可复用）
 - `reports/report.json`：结构化报告（各标的 ML 绩效 + 规则策略寻优结果 + 汇总）
 
@@ -56,7 +57,7 @@ cp .env.example .env
 PYTHONPATH=. python tests/headless_test.py
 ```
 
-覆盖：行情 / 指标 / 策略 / 回测 / 模拟交易 / 特征工程 / ML 训练 / walk-forward / 参数寻优 / 数据缓存增量 / 全流程编排，用于检查所覆盖的链路，不替代时间边界回归和真实数据验证。
+覆盖：显式合成行情 / 指标 / 策略 / 回测 / 模拟交易 / 特征工程 / ML 训练 / walk-forward / 参数寻优 / 全流程编排，用于检查所覆盖的链路，不替代时间边界回归和真实数据验证。
 
 ---
 
@@ -129,12 +130,12 @@ quant_platform/
 ├── README.md
 ├── tests/
 │   └── headless_test.py    # 无界面核心链路测试
-├── data_cache/             # 行情增量缓存（自动生成）
+├── data_cache/             # 已验证来源的行情缓存（自动生成）
 ├── models/                 # 训练好的 ML 模型（自动生成）
 ├── reports/                # 报告 report.json（自动生成）
 └── quant/
     ├── ai/                 # 统一 AI 网关（本地 GBM 推理 + 远程 LLM）
-    ├── data/               # 行情加载（akshare + 离线兜底）+ 本地缓存 store
+    ├── data/               # AkShare 行情、显式合成演示与来源校验缓存
     ├── indicators/         # MA / MACD / RSI / KDJ / BOLL
     ├── strategies/         # 策略（base + 具体策略 + 注册表）
     ├── backtest/           # 回测引擎 + 绩效指标 + 参数寻优
@@ -169,7 +170,8 @@ class MyStrategy(Strategy):
 
 - 默认通过 `akshare.stock_zh_a_hist` 获取沪深 A 股前复权日线。
 - 首次运行「刷新股票列表」会从 akshare 拉取全市场代码表（需联网，可能稍慢）。
-- 任何网络 / 接口异常都会自动切换为内置模拟数据，不影响软件运行。
+- 网络 / 接口异常会报错；离线演示需在 GUI 主动选择“合成演示数据”，或用 `python run_pipeline.py --symbols 600519 --synthetic`。报告的 `data_source` 字段及每个标的的同名字段会标为 `synthetic`。
+- 合成演示数据只用于链路检查，不写入 AkShare 缓存。旧版无来源 CSV 不会读取为真实行情；重新联网抓取后才建立新缓存。
 
 ---
 

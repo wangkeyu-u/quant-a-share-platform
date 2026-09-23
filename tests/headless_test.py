@@ -143,17 +143,18 @@ def main():
     check("寻优返回 top_n 结果", len(ma_opt) == 3)
     check("寻优结果均为有交易组合", all(r["交易次数"] > 0 for r in ma_opt))
 
-    # 数据缓存(增量更新 / 离线回退)
+    # 显式合成演示：不得写入真实行情缓存
     sym = "TEST_CACHE_600519"
-    d1 = store_load(sym, "20230101", "20231231")
-    check("缓存加载返回行情", not d1.empty and len(d1) > 100)
-    check("缓存已落地", sym in cached_symbols())
-    d2 = store_load(sym, "20230101", "20240601")  # 区间扩展,应触发增量补数
-    check("缓存增量后行数增多", len(d2) >= len(d1))
+    d1 = store_load(sym, "20230101", "20231231", source="synthetic")
+    check("合成演示返回行情", not d1.empty and len(d1) > 100)
+    check("合成演示未写入真实缓存", sym not in cached_symbols())
+    d2 = store_load(sym, "20230101", "20240601", source="synthetic")
+    check("演示范围扩展后行数增多", len(d2) >= len(d1))
 
     # 全流程编排(pipeline,含与买入持有基准对比)
-    report, path = run_pipeline(["TEST_PIPE_600519"], start="20230101", top_n=2)
+    report, path = run_pipeline(["TEST_PIPE_600519"], start="20230101", top_n=2, source="synthetic")
     check("pipeline 生成报告文件", __import__("os").path.exists(path))
+    check("pipeline 明示合成来源", report["data_source"] == "synthetic")
     check("pipeline 报告含 summary", "summary" in report and len(report["summary"]) == 1)
     check("pipeline 报告含 ML 训练指标", "ml" in report["symbols"]["TEST_PIPE_600519"])
     check("pipeline 报告含基准对比", "benchmark" in report["symbols"]["TEST_PIPE_600519"]["ml"])
