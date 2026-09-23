@@ -46,5 +46,5 @@ Both GUI simulation actions use the same bar method. Their Python syntax was che
 - `PaperTrader.step(date, price, target)` is replaced by `step_bar(date, open_price, close_price, signal)`; do not pre-shift signals when migrating. `Backtest.run` keeps its API and now preserves the input dataframe's index when aligning signals. Missing aligned signals mean a zero target.
 - Old reports use different timing and benchmark assumptions and must be regenerated. They are not corrected results under this protocol.
 - Observed opens are assumed fillable. There is no exchange calendar, suspension/price-limit/volume simulation, integer-lot sizing or forced final liquidation. Slippage remains a proportional cash cost; trade `price` records the bar open.
-- Equity includes fees. Existing per-trade `pnl` and win-rate summaries still use gross price differences, not fee-adjusted realized P&L.
+- Equity includes fees. Per-trade `pnl` and win-rate summaries now use fee-adjusted realized P&L under the [cost-basis repair](net-realized-pnl.md); old reports retain the earlier gross-price convention.
 - Adjusted-data revisions, survivorship, in-sample strategy selection remain unresolved. Automatic synthetic fallback was subsequently removed in the [source-provenance repair](data-provenance.md). This repair does not establish tradable performance.

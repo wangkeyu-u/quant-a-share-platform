@@ -79,7 +79,8 @@ class PaperTrader:
             cost = buy_shares * price * (1 + fee)
             if buy_shares > 1e-9 and cost <= self.cash + 1e-6:
                 if self.shares + buy_shares > 0:
-                    self.avg_cost = (self.avg_cost * self.shares + price * buy_shares) / (self.shares + buy_shares)
+                    # Cost basis includes entry fees already debited from cash.
+                    self.avg_cost = (self.avg_cost * self.shares + cost) / (self.shares + buy_shares)
                 self.cash -= cost
                 self.shares += buy_shares
                 self.trades.append({"date": pd.Timestamp(date), "signal_date": self.signal_date, "side": "BUY",
@@ -88,7 +89,7 @@ class PaperTrader:
         elif delta < -1e-9:
             sell_shares = -delta
             proceeds = sell_shares * price * (1 - fee)
-            pnl = (price - self.avg_cost) * sell_shares if self.avg_cost > 0 else 0.0
+            pnl = proceeds - self.avg_cost * sell_shares
             self.cash += proceeds
             self.shares -= sell_shares
             if self.shares < 1e-9:
