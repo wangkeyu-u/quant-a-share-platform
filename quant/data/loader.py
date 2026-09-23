@@ -1,13 +1,12 @@
-"""行情数据加载:优先 akshare 真实 A 股数据,失败回退确定性模拟数据。"""
+"""日线行情：真实数据失败时显式报错，合成演示需显式选择。"""
 from __future__ import annotations
 
-import numpy as np
 import pandas as pd
 
 try:
     import akshare as ak
     _AKSHARE_OK = True
-except Exception:  # pragma: no cover - akshare 未安装时降级
+except ImportError:  # pragma: no cover - AkShare 未安装时由 market 模式报错
     _AKSHARE_OK = False
 
 from quant.data.mock import generate_mock
@@ -48,28 +47,54 @@ def get_stock_list() -> pd.DataFrame:
     return pd.DataFrame(_SAMPLE_STOCKS, columns=["code", "name"])
 
 
-def get_daily(code: str, start: str, end: str, adjust: str = "qfq") -> pd.DataFrame:
-    """获取日线行情。
+class DataSourceError(RuntimeError):
+    """要求的行情来源不可用或没有返回数据。"""
 
-    返回列: date, open, high, low, close, volume (按日期升序)。
-    code 为 6 位 A 股代码。优先 akshare,失败回退模拟数据。
-    """
+
+def get_daily(code: str, start: str, end: str, adjust: str = "qfq",
+              source: str = "market") -> pd.DataFrame:
+    """获取日线行情。market=AkShare；synthetic=显式合成演示。"""
+    if source not in ("market", "synthetic"):
+        raise ValueError("source must be 'market' or 'synthetic'")
     code = str(code).zfill(6)
-    if _AKSHARE_OK:
-        try:
-            df = ak.stock_zh_a_hist(
-                symbol=code, period="daily",
-                start_date=start, end_date=end, adjust=adjust,
-            )
-            if df is not None and not df.empty:
-                df = df.rename(columns={
-                    "日期": "date", "开盘": "open", "收盘": "close",
-                    "最高": "high", "最低": "low", "成交量": "volume",
-                })
-                df["date"] = pd.to_datetime(df["date"])
-                df = df[["date", "open", "high", "low", "close", "volume"]].copy()
-                df = df.sort_values("date").reset_index(drop=True)
-                return df
-        except Exception as exc:  # pragma: no cover
-            print(f"[loader] akshare 拉取失败({code}),使用模拟数据: {exc}")
-    return generate_mock(code, start, end)
+    if source == "synthetic":
+        df = generate_mock(code, start, end)
+        df.attrs["data_source"] = "synthetic"
+        return df
+    if not _AKSHARE_OK:
+        raise DataSourceError("AkShare is unavailable; install it or explicitly select synthetic demo mode")
+    try:
+        df = ak.stock_zh_a_hist(
+            symbol=code, period="daily",
+            start_date=start, end_date=end, adjust=adjust,
+        )
+    except Exception as exc:
+        raise DataSourceError(f"AkShare request failed for {code}") from exc
+    if df is None or df.empty:
+        raise DataSourceError(f"AkShare returned no bars for {code} in {start}..{end}")
+    required = {
+        "日期": "date", "开盘": "open", "收盘": "close",
+        "最高": "high", "最低": "low", "成交量": "volume",
+    }
+    if not required.keys() <= set(df.columns):
+        raise DataSourceError(f"AkShare response for {code} is missing OHLCV columns")
+    try:
+        df = df.rename(columns=required)
+        df = df[["date", "open", "high", "low", "close", "volume"]].copy()
+        df["date"] = pd.to_datetime(df["date"], errors="raise")
+        for column in ("open", "high", "low", "close", "volume"):
+            df[column] = pd.to_numeric(df[column], errors="raise")
+        if (df["date"].isna().any() or df["date"].duplicated().any()
+                or df[["open", "high", "low", "close", "volume"]].isna().any().any()
+                or (df[["open", "high", "low", "close"]] <= 0).any().any()
+                or (df["volume"] < 0).any()):
+            raise ValueError("invalid date or OHLCV value")
+        df = df.sort_values("date").reset_index(drop=True)
+        df = df[(df["date"] >= pd.Timestamp(start)) & (df["date"] <= pd.Timestamp(end))].reset_index(drop=True)
+        if df.empty:
+            raise ValueError("no bars inside requested range")
+    except (ValueError, TypeError, KeyError) as exc:
+        raise DataSourceError(f"AkShare response for {code} has invalid OHLCV values") from exc
+    df.attrs["data_source"] = "akshare"
+    df.attrs["adjust"] = adjust
+    return df

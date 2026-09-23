@@ -1,5 +1,7 @@
-"""离线兜底行情:基于股票代码生成确定性、含多空段切换的日线(更利于策略产生信号)。"""
+"""显式合成演示行情：按代码和日期区间生成可重复的 OHLCV。"""
 from __future__ import annotations
+
+import hashlib
 
 import numpy as np
 import pandas as pd
@@ -14,16 +16,15 @@ def generate_mock(code: str, start: str, end: str) -> pd.DataFrame:
     end_d = pd.to_datetime(end)
     days = pd.bdate_range(start_d, end_d)  # 仅工作日
     n = len(days)
-    if n < 2:
-        days = pd.bdate_range(start_d, start_d + pd.Timedelta(days=120))
-        n = len(days)
+    if n == 0:
+        raise ValueError("synthetic date range has no business days")
 
-    seed = int(code) if code.isdigit() else int(hash(code) % (2 ** 31))
+    seed = int.from_bytes(hashlib.sha256(str(code).encode()).digest()[:8], "big")
     rng = np.random.default_rng(seed)
 
     vol = rng.uniform(0.012, 0.022)
     # 分段趋势,产生均线交叉
-    n_seg = max(3, n // 40)
+    n_seg = min(n, max(1, n // 40))
     seg_len = n // n_seg
     rets = np.empty(n)
     idx = 0

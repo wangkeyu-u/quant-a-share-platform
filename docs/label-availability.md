@@ -65,4 +65,4 @@ PY
 
 ## Remaining limits
 
-This fixes the identified label/cutoff leak, not the entire backtest methodology. Same-close execution was subsequently repaired with [next-observed-open execution](execution-timing.md). Revised adjusted prices, survivorship, in-sample strategy selection and source fallback still need separate work. CV scores can be unavailable when a fold has one class; the current parameter fallback remains the first grid entry and is not evidence of successful tuning.
+This fixes the identified label/cutoff leak, not the entire backtest methodology. Same-close execution was subsequently repaired with [next-observed-open execution](execution-timing.md). Automatic source fallback was addressed by the later [source-provenance repair](data-provenance.md). Revised adjusted prices, survivorship and in-sample strategy selection remain unresolved. CV scores can be unavailable when a fold has one class; the current parameter fallback remains the first grid entry and is not evidence of successful tuning.

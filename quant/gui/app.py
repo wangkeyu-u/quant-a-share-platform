@@ -31,7 +31,7 @@ ABOUT_CONTENT = (
     "1. 行情 / 信号\n"
     "   - 选择或输入股票代码,设置起止日期,选择策略与参数。\n"
     "   - 点击『加载行情并计算信号』绘制 K 线、成交量与买卖点。\n"
-    "   - 数据源:优先 akshare 真实 A 股日线;无网络/接口异常时自动回退到确定性模拟数据。\n\n"
+    "   - 默认 AkShare 真实日线；接口失败会报错。合成演示须在行情页明确选择。\n\n"
     "2. 回测\n"
     "   - 设置初始资金、佣金率、滑点率、仓位比例(1.0=满仓)。\n"
     "   - 运行回测后查看权益曲线、绩效指标(年化/最大回撤/夏普/卡玛/胜率)与成交记录。\n\n"
@@ -87,6 +87,7 @@ class QuantApp:
         self.end_var = tk.StringVar(value=end.strftime("%Y%m%d"))
         self.stock_var = tk.StringVar(value=list(self.stock_names)[0])
         self.strategy_var = tk.StringVar(value=list_strategies()[0][0])
+        self.source_var = tk.StringVar(value="market")
 
         self._build()
 
@@ -132,8 +133,13 @@ class QuantApp:
         self.strat_combo.bind("<<ComboboxSelected>>", lambda e: self._build_param_controls())
         ttk.Button(top, text="加载行情并计算信号", command=self._on_compute).grid(row=2, column=3, padx=4)
 
-        self.status_var = tk.StringVar(value="就绪")
-        ttk.Label(top, textvariable=self.status_var, foreground="blue").grid(row=3, column=0, columnspan=4, sticky=tk.W)
+        ttk.Label(top, text="数据来源:").grid(row=3, column=0, sticky=tk.W)
+        ttk.Radiobutton(top, text="AkShare 行情", variable=self.source_var,
+                        value="market", command=self._on_source_changed).grid(row=3, column=1, sticky=tk.W)
+        ttk.Radiobutton(top, text="合成演示数据", variable=self.source_var,
+                        value="synthetic", command=self._on_source_changed).grid(row=3, column=2, sticky=tk.W)
+        self.status_var = tk.StringVar(value="就绪 · AkShare 行情")
+        ttk.Label(top, textvariable=self.status_var, foreground="blue").grid(row=4, column=0, columnspan=4, sticky=tk.W)
 
         # 参数区
         self.param_frame = ttk.LabelFrame(self.tab_market, text="策略参数")
@@ -187,6 +193,22 @@ class QuantApp:
         except Exception as e:
             self.status_var.set(f"刷新失败: {e}")
 
+    def _on_source_changed(self):
+        self.df = None
+        self.signals = None
+        self.data_key = None
+        self.bt_result = None
+        self.paper = None
+        self.sim_index = 0
+        for panel in (self.kline_frame, self.bt_frame, self.paper_frame):
+            for widget in panel.winfo_children():
+                widget.destroy()
+        self.bt_metrics.delete(*self.bt_metrics.get_children())
+        self.bt_log.delete(*self.bt_log.get_children())
+        self.paper_tree.delete(*self.paper_tree.get_children())
+        self.paper_status.set("数据来源已切换")
+        self.status_var.set("数据来源已切换，请重新加载行情并计算信号")
+
     def _current_params(self) -> dict:
         out = {}
         strat = get_strategy(self.strategy_var.get())
@@ -201,9 +223,10 @@ class QuantApp:
         code = self.stock_names.get(self.stock_var.get())
         if not code:
             code = str(self.stock_var.get()).split()[0]
-        key = (code, self.start_var.get(), self.end_var.get())
+        key = (code, self.start_var.get(), self.end_var.get(), self.source_var.get())
         if key != self.data_key or self.df is None:
-            df = get_daily(code, self.start_var.get(), self.end_var.get)
+            df = get_daily(code, self.start_var.get(), self.end_var.get(),
+                           source=self.source_var.get())
             self.df = df
             self.data_key = key
             self.signals = None
@@ -226,7 +249,7 @@ class QuantApp:
             self._show_fig(self.kline_frame, fig)
             n_buy = int(((self.signals == 1) & (self.signals.shift(1) == 0)).sum())
             self.status_var.set(
-                f"{code} 已加载 {len(self.df)} 根K线,信号买入触发 {n_buy} 次 | 参数: {params}")
+                f"{code} [{self.df.attrs.get('data_source')}] 已加载 {len(self.df)} 根K线,信号买入触发 {n_buy} 次 | 参数: {params}")
         except Exception as e:
             messagebox.showerror("错误", f"计算失败: {e}")
 
@@ -452,6 +475,9 @@ class QuantApp:
             return
         if self.df is None or len(self.df) == 0:
             messagebox.showwarning("提示", "行情为空,无法生成点评")
+            return
+        if self.source_var.get() == "synthetic":
+            messagebox.showinfo("合成演示", "合成数据不生成真实行情点评")
             return
 
         # 优先用已有回测绩效;否则传空 dict(点评主要基于近期价量)

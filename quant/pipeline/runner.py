@@ -20,6 +20,7 @@ from quant.ai import analysis
 from quant.backtest.engine import Backtest
 from quant.backtest.metrics import compute_metrics
 from quant.backtest.optimize import optimize
+from quant.data.loader import DataSourceError
 from quant.data.store import load as load_data
 from quant.ml.trainer import train_models, train_pooled, walk_forward_signals, walk_forward_pooled
 from quant.strategies.registry import get_strategy, list_strategies
@@ -38,7 +39,9 @@ def _round(obj):
 
 def run_pipeline(symbols: list, start: str = "20100101",
                  end: str | None = None, top_n: int = 3,
-                 pooled: bool = False) -> tuple:
+                 pooled: bool = False, source: str = "market") -> tuple:
+    if source not in ("market", "synthetic"):
+        raise ValueError("source must be market or synthetic")
     if end is None:
         end = pd.Timestamp.today().strftime("%Y%m%d")
 
@@ -48,10 +51,13 @@ def run_pipeline(symbols: list, start: str = "20100101",
     remote_configured = gw.remote is not None
 
     # 先一次性把所有标的行情拉到内存,供 pooled 模式复用
-    raw = {sym: load_data(sym, start, end) for sym in symbols}
-    raw = {s: d for s, d in raw.items() if d is not None and not d.empty}
+    raw = {sym: load_data(sym, start, end, source=source) for sym in symbols}
+    expected_source = "akshare" if source == "market" else "synthetic"
     if not raw:
-        raise RuntimeError("没有任何标的能加载到行情(检查代码/网络)")
+        raise ValueError("symbols must not be empty")
+    for sym, frame in raw.items():
+        if frame is None or frame.empty or frame.attrs.get("data_source") != expected_source:
+            raise DataSourceError(f"{sym}: expected {expected_source} bars with verified source")
 
     pooled_model_path = None
     if pooled:
@@ -63,6 +69,7 @@ def run_pipeline(symbols: list, start: str = "20100101",
     report = {
         "generated_at": datetime.datetime.now().isoformat(timespec="seconds"),
         "mode": "pooled" if pooled else "per_symbol",
+        "data_source": expected_source,
         "start": start, "end": end,
         "symbols": {}, "summary": [],
     }
@@ -70,7 +77,7 @@ def run_pipeline(symbols: list, start: str = "20100101",
     for sym in raw:
         df = raw[sym]
         print(f"[pipeline] 处理 {sym} ...")
-        sym_rep: dict = {"bars": int(len(df))}
+        sym_rep: dict = {"bars": int(len(df)), "data_source": report["data_source"]}
 
         # 1) ML 训练 + 保存模型(双模型 / 超参寻优)
         ml_metrics = train_models(df, sym)
@@ -112,7 +119,7 @@ def run_pipeline(symbols: list, start: str = "20100101",
 
     # 远程 AI 分析(可选):远程网关未配置或请求失败都优雅跳过,不影响主流程
     report["ai_commentary"] = None
-    if remote_configured:
+    if remote_configured and source == "market":
         try:
             print("[pipeline] 调用 AI 网关生成报告点评 ...")
             report["ai_commentary"] = analysis.summarize_report(report)

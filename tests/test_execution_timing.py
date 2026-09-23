@@ -119,6 +119,7 @@ class ExecutionTests(unittest.TestCase):
     def test_pipeline_reports_engine_benchmark_and_protocol(self):
         from quant.pipeline import runner
         frame = bars()
+        frame.attrs["data_source"] = "akshare"
         gateway = SimpleNamespace(log=[], remote=None, log_summary=lambda: {})
         with tempfile.TemporaryDirectory() as tmp, \
              patch.object(runner, "REPORTS_DIR", tmp), \
@@ -132,6 +133,7 @@ class ExecutionTests(unittest.TestCase):
             expected = Backtest(frame).run(pd.Series(0., index=frame.index))
             self.assertEqual(ml["benchmark"], runner._round(compute_metrics(expected["benchmark"])))
             self.assertEqual(ml["execution_protocol"], EXECUTION_PROTOCOL)
+            self.assertEqual(report["data_source"], "akshare")
             with open(path) as source:
                 self.assertEqual(json.load(source), report)
 
