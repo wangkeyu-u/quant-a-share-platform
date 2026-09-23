@@ -69,6 +69,30 @@ class ExecutionTests(unittest.TestCase):
         self.assertEqual(paper.trades, [])
         self.assertEqual(paper.equity_curve, [1000])
 
+    def test_realized_pnl_and_win_rate_include_entry_and_exit_costs(self):
+        frame = bars((100, 100, 101), (100, 100, 101))
+        result = Backtest(frame, initial_cash=1000, commission=.01, slippage=0).run(
+            pd.Series([1, 0, 0], index=frame.index))
+        sell = next(trade for trade in result["trades"] if trade["side"] == "SELL")
+
+        self.assertAlmostEqual(result["equity"].iloc[-1], 990.0)
+        self.assertAlmostEqual(sell["pnl"], -10.0)
+        self.assertEqual(result["metrics"]["胜率"], 0.0)
+        self.assertEqual(result["metrics"]["平均亏损"], -10.0)
+
+    def test_partial_exits_keep_fee_inclusive_cost_basis(self):
+        account = PaperTrader(initial_cash=1000, commission=.01, slippage=0)
+        for date, price, signal in zip(
+            pd.date_range("2026-01-02", periods=4), [100, 100, 101, 101], [1, .5, 0, 0]
+        ):
+            account.step_bar(date, price, price, signal)
+
+        sells = [trade for trade in account.trades if trade["side"] == "SELL"]
+        self.assertEqual(len(sells), 2)
+        self.assertTrue(all(trade["pnl"] < 0 for trade in sells))
+        self.assertEqual(account.shares, 0)
+        self.assertAlmostEqual(sum(trade["pnl"] for trade in sells), account.cash - 1000, delta=.02)
+
     def test_repeated_run_resets_trades_and_preserves_original_index(self):
         frame = bars()
         engine = Backtest(frame)
